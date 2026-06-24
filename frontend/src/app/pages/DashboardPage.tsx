@@ -194,11 +194,9 @@ function ExerciseAccordion({
                         {logs.length > 1 && <button onClick={() => removeWeek(idx)} className="text-muted-foreground hover:text-destructive transition-all"><Trash2 size={12} /></button>}
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                    <div className="grid grid-cols-1 gap-2" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                       <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Date</label><input type="date" value={log.date} onChange={(e) => updateField(idx, "date", e.target.value)} className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
                       <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Weight (kg/lbs)</label><input type="number" value={log.weight} onChange={(e) => updateField(idx, "weight", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                       <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Reps (Set 1)</label><input type="number" value={log.repsSet1} onChange={(e) => updateField(idx, "repsSet1", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
                       <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Reps (Set 2)</label><input type="number" value={log.repsSet2} onChange={(e) => updateField(idx, "repsSet2", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
                       <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Reps (Set 3)</label><input type="number" value={log.repsSet3} onChange={(e) => updateField(idx, "repsSet3", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
@@ -358,6 +356,10 @@ export default function DashboardPage() {
             );
           })}
           <div className="border-t border-sidebar-border mt-2 pt-2">
+            <Link to="/dashboard" className="w-full flex items-center gap-3 px-4 py-2 text-left text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-all">
+              <span className="text-xs font-mono flex-shrink-0">◫</span>
+              {sidebarOpen && <span className="text-xs font-semibold uppercase tracking-wider" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>Dashboard</span>}
+            </Link>
             <Link to="/dashboard/profile" className="w-full flex items-center gap-3 px-4 py-2 text-left text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-all">
               <span className="text-xs font-mono flex-shrink-0">◉</span>
               {sidebarOpen && <span className="text-xs font-semibold uppercase tracking-wider" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>Profile</span>}
