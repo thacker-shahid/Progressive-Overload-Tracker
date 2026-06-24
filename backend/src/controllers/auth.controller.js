@@ -1,5 +1,6 @@
 const User = require("../models/User");
-const { generateToken } = require("../utils/generateToken");
+const jwt = require("jsonwebtoken");
+const { generateToken, generateRefreshToken } = require("../utils/generateToken");
 const { sendVerificationEmail, sendPasswordResetEmail } = require("../utils/email");
 
 // Generate 6-digit code
@@ -76,10 +77,12 @@ exports.login = async (req, res) => {
 
     // Direct login — no 2-step verification needed
     const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
 
     res.status(200).json({
       message: "Login successful.",
       token,
+      refreshToken,
       user: user.toJSON(),
     });
   } catch (err) {
@@ -118,10 +121,12 @@ exports.verify = async (req, res) => {
 
     // Generate JWT
     const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
 
     res.status(200).json({
       message: "Verification successful.",
       token,
+      refreshToken,
       user: user.toJSON(),
     });
   } catch (err) {
@@ -232,5 +237,48 @@ exports.resetPassword = async (req, res) => {
   } catch (err) {
     console.error("Reset password error:", err);
     res.status(500).json({ error: "Failed to reset password. Please try again." });
+  }
+};
+
+// POST /api/auth/refresh
+exports.refresh = async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({ error: "Refresh token is required." });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    } catch (err) {
+      if (err.name === "TokenExpiredError") {
+        return res.status(401).json({ error: "Refresh token expired. Please login again." });
+      }
+      return res.status(401).json({ error: "Invalid refresh token." });
+    }
+
+    if (decoded.type !== "refresh") {
+      return res.status(401).json({ error: "Invalid token type." });
+    }
+
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(401).json({ error: "User not found." });
+    }
+
+    // Issue new access token and rotate refresh token
+    const newToken = generateToken(user._id);
+    const newRefreshToken = generateRefreshToken(user._id);
+
+    res.status(200).json({
+      token: newToken,
+      refreshToken: newRefreshToken,
+      user: user.toJSON(),
+    });
+  } catch (err) {
+    console.error("Refresh token error:", err);
+    res.status(500).json({ error: "Token refresh failed." });
   }
 };

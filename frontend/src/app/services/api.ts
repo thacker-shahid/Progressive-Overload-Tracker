@@ -1,7 +1,46 @@
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
+const TOKEN_KEY = "gym-tracker-token";
+const REFRESH_TOKEN_KEY = "gym-tracker-refresh-token";
+
 function getToken(): string | null {
-  return localStorage.getItem("gym-tracker-token");
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function getRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+let isRefreshing = false;
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  try {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!res.ok) {
+      // Refresh failed — clear tokens
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+      return null;
+    }
+
+    const data = await res.json();
+    localStorage.setItem(TOKEN_KEY, data.token);
+    localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
+    return data.token;
+  } catch {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    return null;
+  }
 }
 
 async function request(endpoint: string, options: RequestInit = {}): Promise<any> {
@@ -15,10 +54,36 @@ async function request(endpoint: string, options: RequestInit = {}): Promise<any
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
+  let res = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers,
   });
+
+  // If access token expired, try refreshing
+  if (res.status === 401 && getRefreshToken() && !endpoint.includes("/auth/refresh")) {
+    // Ensure only one refresh call at a time
+    if (!isRefreshing) {
+      isRefreshing = true;
+      refreshPromise = refreshAccessToken().finally(() => {
+        isRefreshing = false;
+        refreshPromise = null;
+      });
+    }
+
+    const newToken = await refreshPromise;
+    if (newToken) {
+      headers["Authorization"] = `Bearer ${newToken}`;
+      res = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers,
+      });
+    } else {
+      // Refresh failed — force logout by dispatching event
+      window.dispatchEvent(new Event("auth:logout"));
+      const data = await res.json();
+      throw new Error(data.error || "Session expired. Please login again.");
+    }
+  }
 
   const data = await res.json();
 

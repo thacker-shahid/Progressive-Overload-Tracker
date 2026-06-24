@@ -31,6 +31,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = "gym-tracker-token";
+const REFRESH_TOKEN_KEY = "gym-tracker-refresh-token";
 const USER_KEY = "gym-tracker-user";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -48,8 +49,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(data.user);
           localStorage.setItem(USER_KEY, JSON.stringify(data.user));
         } catch {
-          // Token invalid/expired
+          // Token invalid/expired — refresh will be attempted by api.ts automatically
+          // If refresh also fails, tokens are already cleared by the api layer
           localStorage.removeItem(TOKEN_KEY);
+          localStorage.removeItem(REFRESH_TOKEN_KEY);
           localStorage.removeItem(USER_KEY);
         }
       }
@@ -58,11 +61,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     init();
   }, []);
 
+  // Listen for forced logout from api layer (when refresh token expires)
+  useEffect(() => {
+    function handleForceLogout() {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      setUser(null);
+    }
+    window.addEventListener("auth:logout", handleForceLogout);
+    return () => window.removeEventListener("auth:logout", handleForceLogout);
+  }, []);
+
   const login = async (email: string, password: string) => {
     try {
       const data = await authApi.login(email, password);
-      // Login now returns token directly (no 2-step verification)
       localStorage.setItem(TOKEN_KEY, data.token);
+      localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
       localStorage.setItem(USER_KEY, JSON.stringify(data.user));
       setUser(data.user);
       return { success: true };
@@ -84,6 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await authApi.verify(email, code);
       localStorage.setItem(TOKEN_KEY, data.token);
+      localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
       localStorage.setItem(USER_KEY, JSON.stringify(data.user));
       setUser(data.user);
       return { success: true };
@@ -103,6 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     setUser(null);
   };
