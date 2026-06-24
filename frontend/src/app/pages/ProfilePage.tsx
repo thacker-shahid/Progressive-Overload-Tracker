@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Save, User, Menu, X, BarChart3 } from "lucide-react";
 import { clsx } from "clsx";
+import { Link } from "react-router";
 import { useAuth } from "../context/AuthContext";
 import { userApi, exerciseApi } from "../services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -142,6 +143,19 @@ export default function ProfilePage() {
         </div>
 
         <nav className="flex-1 py-2 overflow-y-auto">
+          {/* Dashboard link */}
+          <Link
+            to="/dashboard"
+            className="w-full flex items-center gap-3 px-4 py-2 text-left text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-all duration-150 relative"
+          >
+            <span className="flex-shrink-0 text-muted-foreground">
+              <BarChart3 size={16} />
+            </span>
+            {sidebarOpen && <span className="text-xs font-semibold uppercase tracking-wider" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>Dashboard</span>}
+          </Link>
+
+          <div className="border-t border-sidebar-border my-2" />
+
           {/* Profile link */}
           <button
             onClick={() => { setActiveView("profile"); if (window.innerWidth < 768) setSidebarOpen(false); }}

@@ -356,10 +356,6 @@ export default function DashboardPage() {
             );
           })}
           <div className="border-t border-sidebar-border mt-2 pt-2">
-            <Link to="/dashboard" className="w-full flex items-center gap-3 px-4 py-2 text-left text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-all">
-              <span className="text-xs font-mono flex-shrink-0">◫</span>
-              {sidebarOpen && <span className="text-xs font-semibold uppercase tracking-wider" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>Dashboard</span>}
-            </Link>
             <Link to="/dashboard/profile" className="w-full flex items-center gap-3 px-4 py-2 text-left text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-all">
               <span className="text-xs font-mono flex-shrink-0">◉</span>
               {sidebarOpen && <span className="text-xs font-semibold uppercase tracking-wider" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>Profile</span>}
