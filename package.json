@@ -2,9 +2,10 @@
   "name": "progressive-overload-tracker",
   "version": "1.0.0",
   "description": "Full-stack Progressive Overload Tracker",
+  "main": "index.js",
   "scripts": {
     "build": "cd frontend && npm install && npm run build && cp -r dist ../dist && cd ../backend && npm install",
-    "start": "node backend/src/server.js"
+    "start": "node index.js"
   },
   "engines": {
     "node": ">=20.0.0"
