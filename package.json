@@ -4,7 +4,7 @@
   "description": "Full-stack Progressive Overload Tracker",
   "scripts": {
     "build": "cd frontend && npm install && npm run build && cp -r dist ../dist",
-    "start": "cd backend && npm start",
+    "start": "node backend/src/server.js",
     "postinstall": "cd backend && npm install"
   },
   "engines": {

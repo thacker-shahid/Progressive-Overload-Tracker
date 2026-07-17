@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") });
 const express = require("express");
 const path = require("path");
 const mongoose = require("mongoose");
@@ -44,7 +44,10 @@ const frontendPath = path.resolve(__dirname, "../../dist");
 app.use(express.static(frontendPath));
 
 // SPA fallback — serve index.html for any non-API route
-app.get("*", (req, res) => {
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api")) {
+    return res.status(404).json({ error: "API route not found" });
+  }
   res.sendFile(path.resolve(__dirname, "../../dist/index.html"));
 });
 
