@@ -40,12 +40,12 @@ app.get("/api/health", (req, res) => {
 });
 
 // ── Serve Frontend (production) ────────────────────────────────────────────
-const frontendPath = path.join(__dirname, "../../frontend/dist");
+const frontendPath = path.resolve(__dirname, "../../dist");
 app.use(express.static(frontendPath));
 
 // SPA fallback — serve index.html for any non-API route
 app.get("*", (req, res) => {
-  res.sendFile(path.join(frontendPath, "index.html"));
+  res.sendFile(path.resolve(__dirname, "../../dist/index.html"));
 });
 
 // Error handler
