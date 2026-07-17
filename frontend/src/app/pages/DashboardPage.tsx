@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 import { Link } from "react-router";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useAuth } from "../context/AuthContext";
-import { exerciseApi } from "../services/api";
+import { exerciseApi, workoutApi } from "../services/api";
 
 // ── Body Part SVG Icons ───────────────────────────────────────────────────────
 
@@ -41,21 +41,29 @@ const BODY_PART_ICONS: Record<string, React.ReactNode> = {
 // ── Data ──────────────────────────────────────────────────────────────────────
 
 type MuscleData = { tabs: string[]; exercises: Record<string, ExerciseItem[]> };
-type ExerciseItem = { name: string; imageUrl?: string; videoUrl?: string };
+type ExerciseItem = { _id?: string; name: string; imageUrl?: string; videoUrl?: string };
 type BodyPartsData = Record<string, MuscleData>;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type WeekLog = { week: number; date: string; weight: string; repsSet1: string; repsSet2: string; repsSet3: string; notes: string };
+type DayLog = { day: number; date: string; weight: string; sets: string[] };
+type WeekLog = { week: number; days: DayLog[]; open: boolean };
 type ExerciseLogs = Record<string, WeekLog[]>;
 
-const STORAGE_KEY_PREFIX = "gym-tracker-logs-";
-const DEFAULT_WEEKS = 4;
+const DEFAULT_WEEKS = 2;
+const DAYS_PER_WEEK = 7;
+const DEFAULT_SETS = 3;
+
+function initDay(dayNum: number): DayLog {
+  return { day: dayNum, date: "", weight: "", sets: Array(DEFAULT_SETS).fill("") };
+}
+
+function initWeek(weekNum: number): WeekLog {
+  return { week: weekNum, days: Array.from({ length: DAYS_PER_WEEK }, (_, i) => initDay(i + 1)), open: weekNum === 1 };
+}
 
 function initWeeks(count: number): WeekLog[] {
-  return Array.from({ length: count }, (_, i) => ({
-    week: i + 1, date: "", weight: "", repsSet1: "", repsSet2: "", repsSet3: "", notes: "",
-  }));
+  return Array.from({ length: count }, (_, i) => initWeek(i + 1));
 }
 
 // ── Exercise Accordion ────────────────────────────────────────────────────────
@@ -68,49 +76,69 @@ function ExerciseAccordion({
   const [open, setOpen] = useState(false);
   const [showChart, setShowChart] = useState(false);
   const key = `${bodyPart}__${muscle}__${name}`;
-  const filledWeeks = logs.filter((w) => w.weight || w.repsSet1 || w.repsSet2 || w.repsSet3).length;
+  const filledDays = logs.reduce((count, week) => count + week.days.filter((d) => d.weight || d.sets.some((s) => s)).length, 0);
 
   function addWeek() {
-    const next = logs.length + 1;
-    onUpdateLogs([...logs, { week: next, date: "", weight: "", repsSet1: "", repsSet2: "", repsSet3: "", notes: "" }]);
+    onUpdateLogs([...logs, initWeek(logs.length + 1)]);
+  }
+  function removeWeek(weekIdx: number) {
+    onUpdateLogs(logs.filter((_, i) => i !== weekIdx).map((w, i) => ({ ...w, week: i + 1 })));
+  }
+  function toggleWeek(weekIdx: number) {
+    onUpdateLogs(logs.map((w, i) => i === weekIdx ? { ...w, open: !w.open } : w));
+  }
+  function updateDayField(weekIdx: number, dayIdx: number, field: "date" | "weight", value: string) {
+    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, [field]: value } : d) } : w));
+  }
+  function updateDaySet(weekIdx: number, dayIdx: number, setIdx: number, value: string) {
+    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, sets: d.sets.map((s, si) => si === setIdx ? value : s) } : d) } : w));
+  }
+  function addSet(weekIdx: number, dayIdx: number) {
+    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, sets: [...d.sets, ""] } : d) } : w));
+  }
+  function removeSet(weekIdx: number, dayIdx: number) {
+    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx && d.sets.length > 1 ? { ...d, sets: d.sets.slice(0, -1) } : d) } : w));
   }
 
-  function removeWeek(idx: number) {
-    const updated = logs.filter((_, i) => i !== idx).map((w, i) => ({ ...w, week: i + 1 }));
-    onUpdateLogs(updated);
+  function getAllFilledDays(): DayLog[] {
+    const all: DayLog[] = [];
+    for (const week of logs) for (const day of week.days) if (day.weight || day.sets.some((s) => s)) all.push(day);
+    return all;
+  }
+  function getOverload(weekIdx: number, dayIdx: number) {
+    const allFilled = getAllFilledDays();
+    const currentDay = logs[weekIdx].days[dayIdx];
+    const ci = allFilled.indexOf(currentDay);
+    if (ci <= 0) return { wt: false, reps: false, sets: false };
+    const prev = allFilled[ci - 1];
+    const cw = parseFloat(currentDay.weight) || 0, pw = parseFloat(prev.weight) || 0;
+    const cr = currentDay.sets.reduce((s, v) => s + (parseInt(v) || 0), 0);
+    const pr = prev.sets.reduce((s, v) => s + (parseInt(v) || 0), 0);
+    return { wt: cw > pw && pw > 0, reps: cr > pr && pr > 0, sets: currentDay.sets.length > prev.sets.length };
+  }
+  function getWeekOverload(weekIdx: number) {
+    const r = { wt: false, reps: false, sets: false };
+    for (let di = 0; di < logs[weekIdx].days.length; di++) {
+      const d = logs[weekIdx].days[di];
+      if (!d.weight && !d.sets.some((s) => s)) continue;
+      const ol = getOverload(weekIdx, di);
+      if (ol.wt) r.wt = true; if (ol.reps) r.reps = true; if (ol.sets) r.sets = true;
+    }
+    return r;
   }
 
-  function updateField(idx: number, field: keyof WeekLog, value: string) {
-    const updated = logs.map((w, i) => i === idx ? { ...w, [field]: value } : w);
-    onUpdateLogs(updated);
-  }
-
-  const hasProgress = filledWeeks >= 2 && (() => {
-    const filled = logs.filter((w) => w.weight);
-    if (filled.length < 2) return false;
-    return parseFloat(filled[filled.length - 1].weight) > parseFloat(filled[0].weight);
-  })();
-
-  const chartData = logs.filter((w) => w.weight).map((w) => ({
-    week: `W${w.week}`,
-    weight: parseFloat(w.weight) || 0,
-  }));
+  const hasProgress = filledDays >= 2 && (() => { const f = getAllFilledDays(); return f.length >= 2 && (parseFloat(f[f.length - 1].weight) || 0) > (parseFloat(f[0].weight) || 0); })();
+  const chartData = getAllFilledDays().filter((d) => d.weight).map((d, i) => ({ day: `D${i + 1}`, weight: parseFloat(d.weight) || 0 }));
 
   return (
     <div className={clsx("border border-border rounded-sm overflow-hidden transition-all duration-200", open && "border-primary/30")}>
       <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-3 sm:px-4 py-3 bg-card hover:bg-secondary/50 transition-colors duration-150 group">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          <span className="font-display text-sm sm:text-base font-semibold tracking-wide text-foreground uppercase truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>
-            {name}
-          </span>
-          {hasProgress && (
-            <span className="flex items-center gap-1 text-primary text-xs font-mono flex-shrink-0">
-              <TrendingUp size={12} /> PR
-            </span>
-          )}
+          <span className="font-display text-sm sm:text-base font-semibold tracking-wide text-foreground uppercase truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>{name}</span>
+          {hasProgress && <span className="flex items-center gap-1 text-primary text-xs font-mono flex-shrink-0"><TrendingUp size={12} /> PR</span>}
         </div>
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-          {filledWeeks > 0 && <span className="text-muted-foreground font-mono text-xs hidden sm:inline">{filledWeeks}W logged</span>}
+          {filledDays > 0 && <span className="text-muted-foreground font-mono text-xs hidden sm:inline">{filledDays} days logged</span>}
           {open ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
         </div>
       </button>
@@ -120,26 +148,16 @@ function ExerciseAccordion({
           {/* Media row */}
           {(imageUrl || videoUrl) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-border">
-            {/* Exercise image */}
             <div className="relative bg-muted aspect-video overflow-hidden group">
-              {imageUrl ? (
-                <img src={imageUrl} alt={`${name} exercise`} className="w-full h-full object-cover opacity-70 group-hover:opacity-90 transition-opacity duration-300" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center"><span className="text-muted-foreground/40 text-xs uppercase">No Image</span></div>
-              )}
+              {imageUrl ? (<img src={imageUrl} alt={`${name} exercise`} className="w-full h-full object-cover opacity-70 group-hover:opacity-90 transition-opacity duration-300" />) : (<div className="w-full h-full flex items-center justify-center"><span className="text-muted-foreground/40 text-xs uppercase">No Image</span></div>)}
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
               <span className="absolute bottom-3 left-3 text-white text-xs font-medium uppercase tracking-widest" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>{name}</span>
             </div>
-            {/* Video */}
             <div className="relative bg-muted aspect-video overflow-hidden group">
-              {videoUrl ? (
-                <iframe src={videoUrl} title={`${name} demo`} className="w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
-              ) : (
+              {videoUrl ? (<iframe src={videoUrl} title={`${name} demo`} className="w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />) : (
                 <div className="w-full h-full flex items-center justify-center cursor-pointer">
                   <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
-                  <div className="relative z-10 w-14 h-14 rounded-full border-2 border-white/80 flex items-center justify-center group-hover:border-primary group-hover:bg-primary/20 transition-all duration-200">
-                    <Play size={22} className="text-white ml-1 group-hover:text-primary transition-colors" />
-                  </div>
+                  <div className="relative z-10 w-14 h-14 rounded-full border-2 border-white/80 flex items-center justify-center group-hover:border-primary group-hover:bg-primary/20 transition-all duration-200"><Play size={22} className="text-white ml-1 group-hover:text-primary transition-colors" /></div>
                   <span className="absolute bottom-3 left-3 text-white/70 text-xs font-medium uppercase tracking-widest" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>No Video</span>
                 </div>
               )}
@@ -147,91 +165,80 @@ function ExerciseAccordion({
           </div>
           )}
 
-          {/* Chart toggle */}
+          {/* Chart */}
           {chartData.length >= 2 && (
             <div className="px-3 sm:px-4 pt-3">
-              <button onClick={() => setShowChart(!showChart)} className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-mono transition-colors">
-                <BarChart3 size={12} />
-                {showChart ? "Hide Chart" : "Show Progress Chart"}
-              </button>
-              {showChart && (
-                <div className="mt-3 h-40 sm:h-48">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                      <XAxis dataKey="week" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} />
-                      <YAxis tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} />
-                      <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "2px", fontSize: "12px" }} />
-                      <Line type="monotone" dataKey="weight" stroke="var(--primary)" strokeWidth={2} dot={{ fill: "var(--primary)", r: 3 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
+              <button onClick={() => setShowChart(!showChart)} className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-mono transition-colors"><BarChart3 size={12} />{showChart ? "Hide Chart" : "Show Progress Chart"}</button>
+              {showChart && (<div className="mt-3 h-40 sm:h-48"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="var(--border)" /><XAxis dataKey="day" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} /><YAxis tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} /><Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "2px", fontSize: "12px" }} /><Line type="monotone" dataKey="weight" stroke="var(--primary)" strokeWidth={2} dot={{ fill: "var(--primary)", r: 3 }} /></LineChart></ResponsiveContainer></div>)}
             </div>
           )}
 
-          {/* Progressive overload table */}
+          {/* Progressive overload log */}
           <div className="p-3 sm:p-4">
             <div className="flex items-center justify-between mb-3">
               <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-widest" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.12em" }}>Progressive Overload Log</h4>
               <button onClick={addWeek} className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-mono transition-colors"><Plus size={12} /> Add Week</button>
             </div>
 
-            {/* Mobile cards */}
-            <div className="sm:hidden flex flex-col gap-3">
-              {logs.map((log, idx) => {
-                const prevWeight = idx > 0 ? parseFloat(logs[idx - 1].weight) : null;
-                const currWeight = parseFloat(log.weight);
-                const improved = prevWeight !== null && !isNaN(currWeight) && !isNaN(prevWeight) && currWeight > prevWeight;
-                const regressed = prevWeight !== null && !isNaN(currWeight) && !isNaN(prevWeight) && currWeight < prevWeight;
+            <div className="flex flex-col gap-2">
+              {logs.map((week, weekIdx) => {
+                const weekFilledDays = week.days.filter((d) => d.weight || d.sets.some((s) => s)).length;
+                const weekOl = getWeekOverload(weekIdx);
                 return (
-                  <div key={`${key}-m${idx}`} className="border border-border/40 rounded-sm p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className={clsx("inline-flex items-center justify-center px-2 h-5 text-xs font-semibold rounded-sm", improved ? "bg-primary/20 text-primary" : "bg-secondary text-muted-foreground")}>Week {log.week}</span>
-                      <div className="flex items-center gap-2">
-                        {improved && <span className="text-primary text-xs">↑</span>}
-                        {regressed && <span className="text-destructive text-xs">↓</span>}
-                        {logs.length > 1 && <button onClick={() => removeWeek(idx)} className="text-muted-foreground hover:text-destructive transition-all"><Trash2 size={12} /></button>}
+                  <div key={`${key}-week${weekIdx}`} className="border border-border rounded-sm overflow-hidden">
+                    <button onClick={() => toggleWeek(weekIdx)} className="w-full flex items-center justify-between px-3 py-2.5 bg-secondary/30 hover:bg-secondary/50 transition-colors">
+                      <div className="flex items-center gap-2.5">
+                        <span className="bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-sm">Week {week.week}</span>
+                        <span className="text-muted-foreground text-[11px] font-mono">{weekFilledDays} days logged</span>
                       </div>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                      <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Date</label><input type="date" value={log.date} onChange={(e) => updateField(idx, "date", e.target.value)} className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
-                      <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Weight (kg/lbs)</label><input type="number" value={log.weight} onChange={(e) => updateField(idx, "weight", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
-                      <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Reps (Set 1)</label><input type="number" value={log.repsSet1} onChange={(e) => updateField(idx, "repsSet1", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
-                      <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Reps (Set 2)</label><input type="number" value={log.repsSet2} onChange={(e) => updateField(idx, "repsSet2", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
-                      <div><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Reps (Set 3)</label><input type="number" value={log.repsSet3} onChange={(e) => updateField(idx, "repsSet3", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
-                    </div>
-                    <div style={{ fontFamily: "'JetBrains Mono', monospace" }}><label className="text-muted-foreground text-[10px] uppercase block mb-0.5">Notes</label><input type="text" value={log.notes} onChange={(e) => updateField(idx, "notes", e.target.value)} placeholder="—" className="w-full bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></div>
+                      <div className="flex items-center gap-2">
+                        {!week.open && weekOl.wt && <span className="text-primary text-[10px] font-mono">↑ Wt</span>}
+                        {!week.open && weekOl.reps && <span className="text-blue-400 text-[10px] font-mono">↑ Reps</span>}
+                        {!week.open && weekOl.sets && <span className="text-emerald-400 text-[10px] font-mono">↑ Sets</span>}
+                        {logs.length > 1 && <button onClick={(e) => { e.stopPropagation(); removeWeek(weekIdx); }} className="text-muted-foreground hover:text-destructive transition-colors ml-1"><Trash2 size={11} /></button>}
+                        {week.open ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                      </div>
+                    </button>
+                    {week.open && (
+                      <div className="bg-card">
+                        {week.days.map((day, dayIdx) => {
+                          const dayFilled = day.weight || day.sets.some((s) => s);
+                          const ol = dayFilled ? getOverload(weekIdx, dayIdx) : { wt: false, reps: false, sets: false };
+                          return (
+                            <div key={`${key}-w${weekIdx}-d${dayIdx}`} className={clsx("px-3 sm:px-4 py-3 border-b border-border/40 last:border-b-0", ol.sets && "border-l-2 border-l-emerald-400")}>
+                              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>Day {day.day}</span>
+                                <div className="flex-1" />
+                                {ol.wt && <span className="text-primary text-[10px] font-mono">↑ Wt</span>}
+                                {ol.reps && <span className="text-blue-400 text-[10px] font-mono">↑ Reps</span>}
+                                {ol.sets && <span className="text-emerald-400 text-[10px] font-mono">↑ Sets</span>}
+                                <button onClick={() => addSet(weekIdx, dayIdx)} className="text-[10px] text-emerald-400 border border-emerald-400 px-1.5 py-0.5 rounded-sm font-mono hover:bg-emerald-400/10 transition-colors">+ Set</button>
+                                {day.sets.length > DEFAULT_SETS && <button onClick={() => removeSet(weekIdx, dayIdx)} className="text-[10px] text-destructive border border-destructive px-1.5 py-0.5 rounded-sm font-mono hover:bg-destructive/10 transition-colors">− Set</button>}
+                              </div>
+                              <div className="flex flex-wrap gap-2.5 items-end max-sm:flex-col max-sm:items-stretch" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                                <div className="flex flex-col gap-0.5 w-[120px] shrink-0 max-sm:w-full">
+                                  <label className="text-muted-foreground text-[9px] uppercase tracking-wide">Date</label>
+                                  <input type="date" value={day.date} onChange={(e) => updateDayField(weekIdx, dayIdx, "date", e.target.value)} className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs pb-0.5 transition-colors" />
+                                </div>
+                                <div className="flex flex-col gap-0.5 w-[80px] shrink-0 max-sm:w-full">
+                                  <label className="text-muted-foreground text-[9px] uppercase tracking-wide">Weight (kg)</label>
+                                  <input type="number" min="0" value={day.weight} onChange={(e) => updateDayField(weekIdx, dayIdx, "weight", e.target.value)} placeholder="—" className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" />
+                                </div>
+                                {day.sets.map((setVal, setIdx) => (
+                                  <div key={setIdx} className={clsx("flex flex-col gap-0.5 w-[58px] shrink-0 max-sm:w-full", setIdx >= DEFAULT_SETS && "border border-dashed border-emerald-400 rounded-sm px-1 py-0.5")}>
+                                    <label className={clsx("text-[9px] uppercase tracking-wide", setIdx >= DEFAULT_SETS ? "text-emerald-400" : "text-muted-foreground")}>Set {setIdx + 1}{setIdx === day.sets.length - 1 && setIdx >= DEFAULT_SETS ? " ✨" : ""}</label>
+                                    <input type="number" min="0" value={setVal} onChange={(e) => updateDaySet(weekIdx, dayIdx, setIdx, e.target.value)} placeholder="—" className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors w-full" />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}
-            </div>
-
-            {/* Desktop table */}
-            <div className="hidden sm:block overflow-x-auto">
-              <table className="w-full text-xs" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                <thead><tr className="border-b border-border"><th className="text-left text-muted-foreground font-medium py-2 pr-3 w-14">WEEK</th><th className="text-left text-muted-foreground font-medium py-2 pr-3">DATE</th><th className="text-left text-muted-foreground font-medium py-2 pr-3">Weight (kg/lbs)</th><th className="text-left text-muted-foreground font-medium py-2 pr-3">REPS (Set 1)</th><th className="text-left text-muted-foreground font-medium py-2 pr-3">REPS (Set 2)</th><th className="text-left text-muted-foreground font-medium py-2 pr-3">REPS (Set 3)</th><th className="text-left text-muted-foreground font-medium py-2 pr-3">NOTES</th><th className="w-8" /></tr></thead>
-                <tbody>
-                  {logs.map((log, idx) => {
-                    const prevWeight = idx > 0 ? parseFloat(logs[idx - 1].weight) : null;
-                    const currWeight = parseFloat(log.weight);
-                    const improved = prevWeight !== null && !isNaN(currWeight) && !isNaN(prevWeight) && currWeight > prevWeight;
-                    const regressed = prevWeight !== null && !isNaN(currWeight) && !isNaN(prevWeight) && currWeight < prevWeight;
-                    return (
-                      <tr key={`${key}-w${idx}`} className="border-b border-border/40 hover:bg-secondary/30 transition-colors group/row">
-                        <td className="py-2 pr-3"><span className={clsx("inline-flex items-center justify-center w-7 h-5 text-xs font-semibold rounded-sm", improved ? "bg-primary/20 text-primary" : "bg-secondary text-muted-foreground")}>W{log.week}</span></td>
-                        <td className="py-2 pr-3"><input type="date" value={log.date} onChange={(e) => updateField(idx, "date", e.target.value)} className="w-28 bg-transparent border-b border-border focus:border-primary outline-none text-foreground placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></td>
-                        <td className="py-2 pr-3"><div className="flex items-center gap-1"><input type="number" value={log.weight} onChange={(e) => updateField(idx, "weight", e.target.value)} placeholder="—" className="w-16 bg-transparent border-b border-border focus:border-primary outline-none text-foreground placeholder:text-muted-foreground/40 pb-0.5 transition-colors" />{improved && <span className="text-primary text-xs">↑</span>}{regressed && <span className="text-destructive text-xs">↓</span>}</div></td>
-                        <td className="py-2 pr-3"><input type="number" value={log.repsSet1} onChange={(e) => updateField(idx, "repsSet1", e.target.value)} placeholder="—" className="w-12 bg-transparent border-b border-border focus:border-primary outline-none text-foreground placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></td>
-                        <td className="py-2 pr-3"><input type="number" value={log.repsSet2} onChange={(e) => updateField(idx, "repsSet2", e.target.value)} placeholder="—" className="w-12 bg-transparent border-b border-border focus:border-primary outline-none text-foreground placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></td>
-                        <td className="py-2 pr-3"><input type="number" value={log.repsSet3} onChange={(e) => updateField(idx, "repsSet3", e.target.value)} placeholder="—" className="w-12 bg-transparent border-b border-border focus:border-primary outline-none text-foreground placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></td>
-                        <td className="py-2 pr-3"><input type="text" value={log.notes} onChange={(e) => updateField(idx, "notes", e.target.value)} placeholder="—" className="w-full min-w-[60px] bg-transparent border-b border-border focus:border-primary outline-none text-foreground placeholder:text-muted-foreground/40 pb-0.5 transition-colors" /></td>
-                        <td className="py-2">{logs.length > 1 && <button onClick={() => removeWeek(idx)} className="opacity-0 group-hover/row:opacity-100 text-muted-foreground hover:text-destructive transition-all"><Trash2 size={12} /></button>}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
             </div>
           </div>
         </div>
@@ -252,18 +259,13 @@ export default function DashboardPage() {
   const [logs, setLogs] = useState<ExerciseLogs>({});
   const [loadingExercises, setLoadingExercises] = useState(true);
 
-  const userStorageKey = `gym-tracker-logs-${user?._id || "guest"}`;
-
   // Fetch exercises from API
   useEffect(() => {
     async function fetchExercises() {
       try {
         const data = await exerciseApi.getGrouped();
         if (data.bodyParts) {
-          // Use bodyPartOrder from API to maintain correct order
           const orderedKeys: string[] = data.bodyPartOrder || Object.keys(data.bodyParts);
-
-          // Convert API response: exercises contain {_id, name, imageUrl, videoUrl}
           const converted: BodyPartsData = {};
           for (const bp of orderedKeys) {
             const val = (data.bodyParts as Record<string, any>)[bp];
@@ -275,6 +277,7 @@ export default function DashboardPage() {
             for (const muscle of (val.tabs || [])) {
               const exList = val.exercises?.[muscle] || [];
               converted[bp].exercises[muscle] = exList.map((ex: any) => ({
+                _id: ex._id || "",
                 name: ex.name || ex,
                 imageUrl: ex.imageUrl || "",
                 videoUrl: ex.videoUrl || "",
@@ -298,8 +301,26 @@ export default function DashboardPage() {
     fetchExercises();
   }, []);
 
-  useEffect(() => { try { const saved = localStorage.getItem(userStorageKey); if (saved) setLogs(JSON.parse(saved)); } catch {} }, [userStorageKey]);
-  useEffect(() => { if (user) localStorage.setItem(userStorageKey, JSON.stringify(logs)); }, [logs, userStorageKey]);
+  // Load workout logs from API
+  useEffect(() => {
+    async function fetchWorkouts() {
+      try {
+        const data = await workoutApi.getAll();
+        if (data.workouts) {
+          const loaded: ExerciseLogs = {};
+          for (const w of data.workouts) {
+            const key = `${w.bodyPart}__${w.muscle}__${w.exerciseName}`;
+            loaded[key] = w.logs;
+          }
+          setLogs(loaded);
+        }
+      } catch (err) {
+        console.error("Failed to fetch workouts:", err);
+      }
+    }
+    if (user) fetchWorkouts();
+  }, [user]);
+
   useEffect(() => { const part = bodyParts[activeBodyPart]; if (part) setActiveTab(part.tabs[0] || ""); }, [activeBodyPart]);
 
   function getExerciseLogs(bodyPart: string, muscle: string, exercise: string): WeekLog[] {
@@ -308,9 +329,28 @@ export default function DashboardPage() {
     return logs[key];
   }
 
+  // Find exercise _id by name from loaded body parts data
+  function findExerciseId(bodyPart: string, muscle: string, exerciseName: string): string | undefined {
+    const data = bodyParts[bodyPart];
+    if (!data) return undefined;
+    const exList = data.exercises[muscle];
+    if (!exList) return undefined;
+    const ex = exList.find((e) => e.name === exerciseName);
+    return ex?._id;
+  }
+
   function updateExerciseLogs(bodyPart: string, muscle: string, exercise: string, updated: WeekLog[]) {
     const key = `${bodyPart}__${muscle}__${exercise}`;
     setLogs((prev) => ({ ...prev, [key]: updated }));
+
+    // Save to API (debounced via timeout)
+    const exerciseId = findExerciseId(bodyPart, muscle, exercise);
+    if (exerciseId) {
+      clearTimeout((window as any)[`save_${key}`]);
+      (window as any)[`save_${key}`] = setTimeout(() => {
+        workoutApi.save(exerciseId, { bodyPart, muscle, exerciseName: exercise, logs: updated }).catch((err: any) => console.error("Failed to save workout:", err));
+      }, 1000);
+    }
   }
 
   const currentData = bodyParts[activeBodyPart];

@@ -1,14 +1,20 @@
 const mongoose = require("mongoose");
 
+const dayLogSchema = new mongoose.Schema(
+  {
+    day: { type: Number, required: true },
+    date: { type: String, default: "" },
+    weight: { type: String, default: "" },
+    sets: { type: [String], default: ["", "", ""] },
+  },
+  { _id: false }
+);
+
 const weekLogSchema = new mongoose.Schema(
   {
     week: { type: Number, required: true },
-    date: { type: String, default: "" },
-    weight: { type: String, default: "" },
-    repsSet1: { type: String, default: "" },
-    repsSet2: { type: String, default: "" },
-    repsSet3: { type: String, default: "" },
-    notes: { type: String, default: "" },
+    days: { type: [dayLogSchema], default: [] },
+    open: { type: Boolean, default: false },
   },
   { _id: false }
 );
