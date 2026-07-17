@@ -207,7 +207,8 @@ export default function MainLayout() {
         <Outlet />
       </main>
 
-      {/* Footer */}
+      {/* Footer — hidden on full-height pages (dashboard, admin) */}
+      {!location.pathname.startsWith("/dashboard") && !location.pathname.startsWith("/admin") && (
       <footer className="border-t border-border bg-card py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
@@ -258,6 +259,7 @@ export default function MainLayout() {
           </div>
         </div>
       </footer>
+      )}
     </div>
   );
 }
