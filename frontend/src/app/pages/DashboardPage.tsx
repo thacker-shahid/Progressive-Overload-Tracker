@@ -46,7 +46,8 @@ type BodyPartsData = Record<string, MuscleData>;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type DayLog = { day: number; date: string; weight: string; sets: string[] };
+type SetLog = { reps: string; weight: string };
+type DayLog = { day: number; date: string; sets: SetLog[]; open: boolean };
 type WeekLog = { week: number; days: DayLog[]; open: boolean };
 type ExerciseLogs = Record<string, WeekLog[]>;
 
@@ -54,8 +55,12 @@ const DEFAULT_WEEKS = 2;
 const DAYS_PER_WEEK = 7;
 const DEFAULT_SETS = 3;
 
+function initSet(): SetLog {
+  return { reps: "", weight: "" };
+}
+
 function initDay(dayNum: number): DayLog {
-  return { day: dayNum, date: "", weight: "", sets: Array(DEFAULT_SETS).fill("") };
+  return { day: dayNum, date: "", sets: Array.from({ length: DEFAULT_SETS }, () => initSet()), open: false };
 }
 
 function initWeek(weekNum: number): WeekLog {
@@ -76,7 +81,7 @@ function ExerciseAccordion({
   const [open, setOpen] = useState(false);
   const [showChart, setShowChart] = useState(false);
   const key = `${bodyPart}__${muscle}__${name}`;
-  const filledDays = logs.reduce((count, week) => count + week.days.filter((d) => d.weight || d.sets.some((s) => s)).length, 0);
+  const filledDays = logs.reduce((count, week) => count + week.days.filter((d) => d.sets.some((s) => s.reps || s.weight)).length, 0);
 
   function addWeek() {
     onUpdateLogs([...logs, initWeek(logs.length + 1)]);
@@ -87,14 +92,17 @@ function ExerciseAccordion({
   function toggleWeek(weekIdx: number) {
     onUpdateLogs(logs.map((w, i) => i === weekIdx ? { ...w, open: !w.open } : w));
   }
-  function updateDayField(weekIdx: number, dayIdx: number, field: "date" | "weight", value: string) {
-    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, [field]: value } : d) } : w));
+  function toggleDay(weekIdx: number, dayIdx: number) {
+    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, open: !d.open } : d) } : w));
   }
-  function updateDaySet(weekIdx: number, dayIdx: number, setIdx: number, value: string) {
-    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, sets: d.sets.map((s, si) => si === setIdx ? value : s) } : d) } : w));
+  function updateDayDate(weekIdx: number, dayIdx: number, value: string) {
+    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, date: value } : d) } : w));
+  }
+  function updateSetField(weekIdx: number, dayIdx: number, setIdx: number, field: "reps" | "weight", value: string) {
+    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, sets: d.sets.map((s, si) => si === setIdx ? { ...s, [field]: value } : s) } : d) } : w));
   }
   function addSet(weekIdx: number, dayIdx: number) {
-    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, sets: [...d.sets, ""] } : d) } : w));
+    onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx ? { ...d, sets: [...d.sets, initSet()] } : d) } : w));
   }
   function removeSet(weekIdx: number, dayIdx: number) {
     onUpdateLogs(logs.map((w, wi) => wi === weekIdx ? { ...w, days: w.days.map((d, di) => di === dayIdx && d.sets.length > 1 ? { ...d, sets: d.sets.slice(0, -1) } : d) } : w));
@@ -102,7 +110,7 @@ function ExerciseAccordion({
 
   function getAllFilledDays(): DayLog[] {
     const all: DayLog[] = [];
-    for (const week of logs) for (const day of week.days) if (day.weight || day.sets.some((s) => s)) all.push(day);
+    for (const week of logs) for (const day of week.days) if (day.sets.some((s) => s.reps || s.weight)) all.push(day);
     return all;
   }
   function getOverload(weekIdx: number, dayIdx: number) {
@@ -111,24 +119,31 @@ function ExerciseAccordion({
     const ci = allFilled.indexOf(currentDay);
     if (ci <= 0) return { wt: false, reps: false, sets: false };
     const prev = allFilled[ci - 1];
-    const cw = parseFloat(currentDay.weight) || 0, pw = parseFloat(prev.weight) || 0;
-    const cr = currentDay.sets.reduce((s, v) => s + (parseInt(v) || 0), 0);
-    const pr = prev.sets.reduce((s, v) => s + (parseInt(v) || 0), 0);
-    return { wt: cw > pw && pw > 0, reps: cr > pr && pr > 0, sets: currentDay.sets.length > prev.sets.length };
+    const cMaxWt = Math.max(...currentDay.sets.map((s) => parseFloat(s.weight) || 0));
+    const pMaxWt = Math.max(...prev.sets.map((s) => parseFloat(s.weight) || 0));
+    const cTotalReps = currentDay.sets.reduce((sum, s) => sum + (parseInt(s.reps) || 0), 0);
+    const pTotalReps = prev.sets.reduce((sum, s) => sum + (parseInt(s.reps) || 0), 0);
+    return { wt: cMaxWt > pMaxWt && pMaxWt > 0, reps: cTotalReps > pTotalReps && pTotalReps > 0, sets: currentDay.sets.length > prev.sets.length };
   }
   function getWeekOverload(weekIdx: number) {
     const r = { wt: false, reps: false, sets: false };
     for (let di = 0; di < logs[weekIdx].days.length; di++) {
       const d = logs[weekIdx].days[di];
-      if (!d.weight && !d.sets.some((s) => s)) continue;
+      if (!d.sets.some((s) => s.reps || s.weight)) continue;
       const ol = getOverload(weekIdx, di);
       if (ol.wt) r.wt = true; if (ol.reps) r.reps = true; if (ol.sets) r.sets = true;
     }
     return r;
   }
 
-  const hasProgress = filledDays >= 2 && (() => { const f = getAllFilledDays(); return f.length >= 2 && (parseFloat(f[f.length - 1].weight) || 0) > (parseFloat(f[0].weight) || 0); })();
-  const chartData = getAllFilledDays().filter((d) => d.weight).map((d, i) => ({ day: `D${i + 1}`, weight: parseFloat(d.weight) || 0 }));
+  const hasProgress = filledDays >= 2 && (() => {
+    const f = getAllFilledDays();
+    if (f.length < 2) return false;
+    const firstMax = Math.max(...f[0].sets.map((s) => parseFloat(s.weight) || 0));
+    const lastMax = Math.max(...f[f.length - 1].sets.map((s) => parseFloat(s.weight) || 0));
+    return lastMax > firstMax;
+  })();
+  const chartData = getAllFilledDays().map((d, i) => ({ day: `D${i + 1}`, weight: Math.max(...d.sets.map((s) => parseFloat(s.weight) || 0)) })).filter((d) => d.weight > 0);
 
   return (
     <div className={clsx("border border-border rounded-sm overflow-hidden transition-all duration-200", open && "border-primary/30")}>
@@ -202,35 +217,47 @@ function ExerciseAccordion({
                     {week.open && (
                       <div className="bg-card">
                         {week.days.map((day, dayIdx) => {
-                          const dayFilled = day.weight || day.sets.some((s) => s);
+                          const dayFilled = day.sets.some((s) => s.reps || s.weight);
                           const ol = dayFilled ? getOverload(weekIdx, dayIdx) : { wt: false, reps: false, sets: false };
                           return (
-                            <div key={`${key}-w${weekIdx}-d${dayIdx}`} className={clsx("px-3 sm:px-4 py-3 border-b border-border/40 last:border-b-0", ol.sets && "border-l-2 border-l-emerald-400")}>
-                              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <div key={`${key}-w${weekIdx}-d${dayIdx}`} className={clsx("border-b border-border/40 last:border-b-0", ol.sets && "border-l-2 border-l-emerald-400")}>
+                              {/* Day header — collapsible */}
+                              <button onClick={() => toggleDay(weekIdx, dayIdx)} className="w-full flex items-center gap-2 px-3 sm:px-4 py-2.5 hover:bg-secondary/30 transition-colors">
                                 <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>Day {day.day}</span>
+                                {day.date && <span className="text-[10px] text-muted-foreground font-mono">{day.date}</span>}
                                 <div className="flex-1" />
                                 {ol.wt && <span className="text-primary text-[10px] font-mono">↑ Wt</span>}
                                 {ol.reps && <span className="text-blue-400 text-[10px] font-mono">↑ Reps</span>}
                                 {ol.sets && <span className="text-emerald-400 text-[10px] font-mono">↑ Sets</span>}
-                                <button onClick={() => addSet(weekIdx, dayIdx)} className="text-[10px] text-emerald-400 border border-emerald-400 px-1.5 py-0.5 rounded-sm font-mono hover:bg-emerald-400/10 transition-colors">+ Set</button>
-                                {day.sets.length > DEFAULT_SETS && <button onClick={() => removeSet(weekIdx, dayIdx)} className="text-[10px] text-destructive border border-destructive px-1.5 py-0.5 rounded-sm font-mono hover:bg-destructive/10 transition-colors">− Set</button>}
-                              </div>
-                              <div className="flex flex-wrap gap-2.5 items-end max-sm:flex-col max-sm:items-stretch" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                                <div className="flex flex-col gap-0.5 w-[120px] shrink-0 max-sm:w-full">
-                                  <label className="text-muted-foreground text-[9px] uppercase tracking-wide">Date</label>
-                                  <input type="date" value={day.date} onChange={(e) => updateDayField(weekIdx, dayIdx, "date", e.target.value)} className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs pb-0.5 transition-colors" />
-                                </div>
-                                <div className="flex flex-col gap-0.5 w-[80px] shrink-0 max-sm:w-full">
-                                  <label className="text-muted-foreground text-[9px] uppercase tracking-wide">Weight (kg)</label>
-                                  <input type="number" min="0" value={day.weight} onChange={(e) => updateDayField(weekIdx, dayIdx, "weight", e.target.value)} placeholder="—" className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors" />
-                                </div>
-                                {day.sets.map((setVal, setIdx) => (
-                                  <div key={setIdx} className={clsx("flex flex-col gap-0.5 w-[58px] shrink-0 max-sm:w-full", setIdx >= DEFAULT_SETS && "border border-dashed border-emerald-400 rounded-sm px-1 py-0.5")}>
-                                    <label className={clsx("text-[9px] uppercase tracking-wide", setIdx >= DEFAULT_SETS ? "text-emerald-400" : "text-muted-foreground")}>Set {setIdx + 1}{setIdx === day.sets.length - 1 && setIdx >= DEFAULT_SETS ? " ✨" : ""}</label>
-                                    <input type="number" min="0" value={setVal} onChange={(e) => updateDaySet(weekIdx, dayIdx, setIdx, e.target.value)} placeholder="—" className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors w-full" />
+                                <button onClick={(e) => { e.stopPropagation(); addSet(weekIdx, dayIdx); }} className="text-[10px] text-emerald-400 border border-emerald-400 px-1.5 py-0.5 rounded-sm font-mono hover:bg-emerald-400/10 transition-colors">+ Set</button>
+                                {day.sets.length > DEFAULT_SETS && <button onClick={(e) => { e.stopPropagation(); removeSet(weekIdx, dayIdx); }} className="text-[10px] text-destructive border border-destructive px-1.5 py-0.5 rounded-sm font-mono hover:bg-destructive/10 transition-colors">− Set</button>}
+                                {day.open ? <ChevronUp size={12} className="text-muted-foreground ml-1" /> : <ChevronDown size={12} className="text-muted-foreground ml-1" />}
+                              </button>
+                              {/* Day body — expanded */}
+                              {day.open && (
+                                <div className="px-3 sm:px-4 pb-3 bg-secondary/10">
+                                  {/* Date */}
+                                  <div className="mb-3">
+                                    <label className="text-muted-foreground text-[9px] uppercase tracking-wide block mb-1" style={{ fontFamily: "'JetBrains Mono', monospace" }}>Date</label>
+                                    <input type="date" value={day.date} onChange={(e) => updateDayDate(weekIdx, dayIdx, e.target.value)} className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs pb-0.5 transition-colors w-[140px] max-sm:w-full" style={{ fontFamily: "'JetBrains Mono', monospace" }} />
                                   </div>
-                                ))}
-                              </div>
+                                  {/* Sets grid — 2 cols desktop, 1 col mobile */}
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {day.sets.map((setData, setIdx) => (
+                                      <div key={setIdx} className={clsx("flex items-end gap-3 p-2.5 rounded-sm border", setIdx >= DEFAULT_SETS ? "border-dashed border-emerald-400 bg-emerald-400/5" : "border-border/40 bg-card")}>
+                                        <div className="flex flex-col gap-0.5 flex-1">
+                                          <label className={clsx("text-[9px] uppercase tracking-wide", setIdx >= DEFAULT_SETS ? "text-emerald-400 font-semibold" : "text-muted-foreground font-semibold")} style={{ fontFamily: "'JetBrains Mono', monospace" }}>Set {setIdx + 1}{setIdx === day.sets.length - 1 && setIdx >= DEFAULT_SETS ? " ✨" : ""}</label>
+                                          <input type="number" min="0" value={setData.reps} onChange={(e) => updateSetField(weekIdx, dayIdx, setIdx, "reps", e.target.value)} placeholder="reps" className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors w-full" style={{ fontFamily: "'JetBrains Mono', monospace" }} />
+                                        </div>
+                                        <div className="flex flex-col gap-0.5 flex-1">
+                                          <label className="text-[9px] uppercase tracking-wide text-muted-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>Weight (kg)</label>
+                                          <input type="number" min="0" value={setData.weight} onChange={(e) => updateSetField(weekIdx, dayIdx, setIdx, "weight", e.target.value)} placeholder="—" className="bg-transparent border-b border-border focus:border-primary outline-none text-foreground text-xs placeholder:text-muted-foreground/40 pb-0.5 transition-colors w-full" style={{ fontFamily: "'JetBrains Mono', monospace" }} />
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })}

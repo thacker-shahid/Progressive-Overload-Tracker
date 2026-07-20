@@ -1,11 +1,19 @@
 const mongoose = require("mongoose");
 
+const setLogSchema = new mongoose.Schema(
+  {
+    reps: { type: String, default: "" },
+    weight: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
 const dayLogSchema = new mongoose.Schema(
   {
     day: { type: Number, required: true },
     date: { type: String, default: "" },
-    weight: { type: String, default: "" },
-    sets: { type: [String], default: ["", "", ""] },
+    sets: { type: [setLogSchema], default: () => [{ reps: "", weight: "" }, { reps: "", weight: "" }, { reps: "", weight: "" }] },
+    open: { type: Boolean, default: false },
   },
   { _id: false }
 );
@@ -31,7 +39,6 @@ const workoutSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// One workout log per user per exercise
 workoutSchema.index({ user: 1, exercise: 1 }, { unique: true });
 
 module.exports = mongoose.model("Workout", workoutSchema);
